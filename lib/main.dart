@@ -3,10 +3,16 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:selfie_ocr_mtpl/selfie_ocr_mtpl.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
 import 'dart:async';
+import 'package:xml/xml.dart';
 
-void main() => runApp(MaterialApp(home: MyApp()));
+void main() => runApp(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: MyApp(),
+      ),
+    );
 
 class MyApp extends StatefulWidget {
   @override
@@ -14,25 +20,76 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  File _selectedImage;
+  String _selectedImage;
+  double height, width;
+  String qrString = 'QR Not Scanned Yet';
 
   @override
   Widget build(BuildContext context) {
+    height = MediaQuery.of(context).size.height;
+    width = MediaQuery.of(context).size.width;
     return Scaffold(
       appBar: AppBar(
         title: Center(child: Text('Take Selfie Dummy')),
       ),
       body: Center(
-          child: ElevatedButton(
-        onPressed: () {
-          callOCRDetection();
-          FlutterTestSelfiecapture.detectLiveliness(
-              "Hold your phone straight in front of your face\n make sure it fits well with face mask.",
-              "Blink to take the photo\n don't forget to smile!");
-        },
-        child: Text("Click Selfie"),
+          child: Column(
+        children: [
+          ElevatedButton(
+            onPressed: () async {
+              _selectedImage = await takeSelfie();
+              _showBottomSheet();
+            },
+            child: Text("Click Selfie"),
+          ),
+          Column(
+            children: [
+              ElevatedButton(
+                onPressed: () => scanQr(),
+                child: Text("Aadhaar Qr Scan"),
+              ),
+              Text(
+                qrString,
+                style: TextStyle(color: Colors.black, fontSize: 20),
+              )
+            ],
+          ),
+        ],
       )),
     );
+  }
+
+  Future<void> scanQr() async {
+    String qrScan = await FlutterBarcodeScanner.scanBarcode(
+        '#ff6666', 'Cancel', true, ScanMode.QR);
+    final document = XmlDocument.parse(qrScan);
+    final detailNode = document.children.last;
+
+    Map<String, String> details = {};
+    detailNode.attributes.forEach((element) {
+      details[element.name.toString()] = element.value;
+    });
+
+    details.entries.forEach((element) {
+      print(element.key + ":   " + element.value);
+    });
+    this.qrString = details.entries.fold(
+        "",
+        (previousValue, element) =>
+            previousValue + "\n" + element.key + ":   " + element.value);
+    // this.qrString = details["uid"];
+    setState(() {});
+
+    print(details["uid"]);
+  }
+
+  void _showBottomSheet() {
+    if (_selectedImage == null) return;
+    showCupertinoModalPopup(
+        context: context,
+        builder: (context) => Material(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+            child: _buildChoosenImage(context)));
   }
 
   Widget _buildChoosenImage(BuildContext context) {
@@ -45,7 +102,7 @@ class _MyAppState extends State<MyApp> {
         children: [
           Align(
               child: Image.file(
-            _selectedImage,
+            File(_selectedImage),
             width: 122,
             height: 145,
           )),
@@ -62,25 +119,23 @@ class _MyAppState extends State<MyApp> {
           ),
           SizedBox(height: 12),
           GestureDetector(
-            onTap: () {
-              Navigator.of(context).pop();
-              callOCRDetection();
-              FlutterTestSelfiecapture.detectLiveliness(
-                  "Hold your phone straight in front of your face\n make sure it fits well with face mask.",
-                  "Blink to take the photo\n don't forget to smile!");
+            onTap: () async {
+              // Navigator.of(context).pop();
+              _selectedImage = await takeSelfie();
+              _showBottomSheet();
             },
             child: Padding(
               padding: EdgeInsets.all(9),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6)
-                ),
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(6)),
                 height: 46,
                 child: Center(
                     child: Text(
                   'Retake Photo',
-                  style: TextStyle(color: Colors.indigo[900], fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      color: Colors.indigo[900], fontWeight: FontWeight.bold),
                 )),
               ),
             ),
@@ -91,15 +146,13 @@ class _MyAppState extends State<MyApp> {
               padding: EdgeInsets.all(9),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.indigo[900],
-                  borderRadius: BorderRadius.circular(6)
-                ),
+                    color: Colors.indigo[900],
+                    borderRadius: BorderRadius.circular(6)),
                 height: 46,
                 child: Center(
                     child: Text('Confirm',
                         style: TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.bold
-                        ))),
+                            color: Colors.white, fontWeight: FontWeight.bold))),
               ),
             ),
           ),
@@ -108,27 +161,36 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
-  void callOCRDetection() async {
+  Future<String> takeSelfie() async {
+    String filePath = await FlutterTestSelfiecapture.detectLiveliness(
+      "Hold your phone straight in front of your face\n make sure it fits well with face mask.",
+      "Blink to take the photo\n don't forget to smile!",
+    );
+    print("file path - $filePath");
     String directory = (await getTemporaryDirectory()).path;
-    String faceImagePath = "$directory/face_cropped_img.png";
+    String fileNameSuffix = DateTime.now().millisecondsSinceEpoch.toString();
+    String faceImagePath = "$directory/face_cropped_img_$fileNameSuffix.png";
+    print("faceImagePath $faceImagePath");
     final lines = await FlutterTestSelfiecapture.ocrFromDocumentImage(
-        imagePath: "/storage/emulated/0/temp_photo.jpg",
+        imagePath: filePath,
         destFaceImagePath: faceImagePath,
         xOffset: 30,
         yOffset: 50);
+    if (lines != null) {
+      print(lines);
+      final resultData = lines;
+      List<dynamic> items = resultData["ExtractedData"];
+      print("ImagePath == ${resultData["FaceImagePath"]}");
 
-    this._selectedImage = File("/storage/emulated/0/temp_photo.jpg");
+      // if (lines != null) {
+      //   final resultData = lines;
+      //   List<dynamic> items = resultData["ExtractedData"];
+      //   print("ImagePath == ${resultData["ImagePath"]}");
+      //   print("itemsLength == ${items[0]}");
+      // }
 
-    await showCupertinoModalPopup(
-        context: context,
-        builder: (context) => Material(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-            child: _buildChoosenImage(context)));
-    // if (lines != null) {
-    //   final resultData = lines;
-    //   List<dynamic> items = resultData["ExtractedData"];
-    //   print("ImagePath == ${resultData["ImagePath"]}");
-    //   print("itemsLength == ${items[0]}");
-    // }
+      return resultData["FaceImagePath"];
+    }
+    return null;
   }
 }
